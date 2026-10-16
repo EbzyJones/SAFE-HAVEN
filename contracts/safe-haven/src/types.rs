@@ -1,6 +1,16 @@
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, String, Vec};
 
 pub const MAX_DEPOSIT_AMOUNT: i128 = 1_000_000_000_000_000;
+/// Re-export of MAX_LOCK_DURATION_SECS for use in tests and public API.
+///
+/// Defined in constants.rs but re-exported here for compatibility with existing
+/// test imports (test code historically imported from types.rs).
+///
+/// **Value**: 157,788,000 seconds = exactly 5 years.
+///
+/// This constant enforces the maximum lock duration across all deposit types
+/// (`deposit`, `deposit_for`, `deposit_by_ledger`, etc.) and is used by
+/// tests to verify boundary conditions at 5 years and 5 years + 1 second.
 pub const MAX_LOCK_DURATION_SECS: u64 = 157_788_000;
 pub const MIN_LOCK_DURATION_SECS: u64 = 60;
 
