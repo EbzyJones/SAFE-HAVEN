@@ -658,6 +658,110 @@ fn test_deposit_lock_duration_too_short_fails() {
 }
 
 // ================================================================
+//  Minimum lock-duration boundary tests
+//
+//  Acceptance criteria (from issue):
+//    ✓  unlock_time = now            → UnlockTimeNotInFuture
+//    ✓  unlock_time = now + 59 s     → LockDurationTooShort
+//    ✓  unlock_time = now + 60 s     → succeeds (MIN_LOCK_DURATION_SECS = 60)
+//
+//  Timestamp precision note:
+//    `env.ledger().timestamp()` returns a u64 Unix timestamp obtained from
+//    the Stellar ledger's `close_time` field.  On mainnet the ledger closes
+//    approximately every 5 seconds, but the exact close time is determined by
+//    validator consensus and is NOT guaranteed to advance by exactly 1 second
+//    per ledger.  All deposit validation uses `env.ledger().timestamp()` as the
+//    single source of truth, so callers must always compute `unlock_time`
+//    relative to *that* value, not from any off-chain clock.
+// ================================================================
+
+/// unlock_time == now must be rejected with UnlockTimeNotInFuture.
+/// This is the strict `<=` boundary: equal is treated as "not in the future".
+#[test]
+fn test_deposit_unlock_time_equal_to_now_fails() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let now = env.ledger().timestamp();
+    assert_eq!(
+        vault.try_deposit(&alice, &token, &1_000, &now, &0),
+        Err(Ok(VaultError::UnlockTimeNotInFuture))
+    );
+}
+
+/// unlock_time = now + 59 s is strictly in the future but the resulting
+/// lock duration (59 s) is below the 60-second minimum, so the call must
+/// return LockDurationTooShort — not UnlockTimeNotInFuture.
+#[test]
+fn test_deposit_lock_duration_59s_fails_with_too_short() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let now = env.ledger().timestamp();
+    assert_eq!(
+        vault.try_deposit(&alice, &token, &1_000, &(now + 59), &0),
+        Err(Ok(VaultError::LockDurationTooShort))
+    );
+}
+
+/// unlock_time = now + 60 s is the exact minimum allowed lock duration and
+/// must succeed, creating a valid vault entry.
+#[test]
+fn test_deposit_lock_duration_exactly_60s_succeeds() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let now = env.ledger().timestamp();
+    let unlock_time = now + 60;
+    let id = vault.deposit(&alice, &token, &1_000, &unlock_time, &0);
+    let entry = vault.get_vault(&alice, &id).expect("vault entry should exist");
+    assert_eq!(entry.unlock_time, unlock_time);
+    assert_eq!(entry.amount, 1_000);
+}
+
+/// Validates that the same 60-second minimum is enforced for deposit_for.
+#[test]
+fn test_deposit_for_lock_duration_59s_fails_with_too_short() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let bob: Address = Address::generate(&env);
+    let now = env.ledger().timestamp();
+    assert_eq!(
+        vault.try_deposit_for(&alice, &bob, &token, &1_000, &(now + 59), &0),
+        Err(Ok(VaultError::LockDurationTooShort))
+    );
+}
+
+/// Validates that the same 60-second minimum is enforced for deposit_for (happy path).
+#[test]
+fn test_deposit_for_lock_duration_exactly_60s_succeeds() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let bob: Address = Address::generate(&env);
+    let now = env.ledger().timestamp();
+    let id = vault.deposit_for(&alice, &bob, &token, &1_000, &(now + 60), &0);
+    assert!(vault.get_vault(&bob, &id).is_some());
+}
+
+/// Validates that the same 60-second minimum is enforced for multi_deposit.
+#[test]
+fn test_multi_deposit_lock_duration_59s_fails_with_too_short() {
+    use crate::types::TokenDeposit;
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let now = env.ledger().timestamp();
+    let mut tokens = soroban_sdk::Vec::new(&env);
+    tokens.push_back(TokenDeposit { token: token.clone(), amount: 500 });
+    assert_eq!(
+        vault.try_multi_deposit(&alice, &tokens, &(now + 59), &0),
+        Err(Ok(VaultError::LockDurationTooShort))
+    );
+}
+
+/// Validates that the same 60-second minimum is enforced for multi_deposit (happy path).
+#[test]
+fn test_multi_deposit_lock_duration_exactly_60s_succeeds() {
+    use crate::types::TokenDeposit;
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let now = env.ledger().timestamp();
+    let mut tokens = soroban_sdk::Vec::new(&env);
+    tokens.push_back(TokenDeposit { token: token.clone(), amount: 500 });
+    let id = vault.multi_deposit(&alice, &tokens, &(now + 60), &0);
+    assert!(vault.get_multi_vault(&alice, &id).is_some());
+}
+
+// ================================================================
 //  Multiple deposits (multi-deposit support)
 // ================================================================
 
