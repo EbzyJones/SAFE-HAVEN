@@ -50,3 +50,6 @@ pub use prediction_market_errors::PredictionMarketError;
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod test_deposit_id_counter;
