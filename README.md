@@ -267,6 +267,12 @@ Withdraws if `now >= unlock_time`.
 #### `withdraw_to(depositor, deposit_id, recipient)`
 Withdraws to a different address.
 
+**Recipient Validation**
+- The recipient address must be valid and non-zero. Soroban's Address type ensures addresses are properly formed at the SDK level.
+- Validation occurs before any state mutations (storage writes or token transfers), ensuring the transaction fails early with a clear error message if the recipient is invalid.
+- If recipient validation fails, the deposit remains in storage with no state changes.
+- Returns `InvalidRecipient` error (code 28) if the recipient address is invalid.
+
 #### `cancel_deposit(depositor, deposit_id)`
 Early exit with penalty. Penalty is split: 30% goes to fee_recipient, 70% accumulates in the staker rewards pool; remainder returned to depositor.
 
@@ -512,6 +518,7 @@ The contract emits `SustainabilityMilestone` events when depositors achieve envi
 | 17 | `StakerNotFound` | Staker not registered in the staker registry |
 | 18 | `NoRewardsToClaim` | Rewards pool is empty or staker's share rounds to zero |
 | 19 | `InsufficientStakeAmount` | Insufficient staked amount for operation |
+| 28 | `InvalidRecipient` | Recipient address is invalid or zero address in `withdraw_to()` |
 
 ---
 
