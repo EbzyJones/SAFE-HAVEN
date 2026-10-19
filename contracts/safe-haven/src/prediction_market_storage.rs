@@ -6,8 +6,8 @@ use soroban_sdk::{Address, Env, Vec};
 
 use crate::prediction_market_types::{
     PredictionMarket, MarketOutcome, Bet, BetKey, MarketConfig, OracleResolution,
-    MAX_LOCK_DURATION_SECS,
 };
+use crate::types::MAX_LOCK_DURATION_SECS;
 
 // Storage key types for prediction markets
 #[derive(Clone)]

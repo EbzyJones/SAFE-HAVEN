@@ -17,6 +17,9 @@ use crate::{
         STORAGE_VERSION, MAX_TOKENS_PER_DEPOSIT, MEVCommitment, MEVDetection, MEVStatus,
         PriceSample, SustainabilityMetrics, BatchWithdrawalResult, WithdrawalResult,
     },
+    prediction_market,
+    prediction_market_errors::PredictionMarketError,
+    prediction_market_types::{PredictionMarket, MarketOutcome, Bet},
 };
 
 /// Minimum compound frequency: must be at least 60 seconds if non-zero.
@@ -4222,5 +4225,150 @@ impl SafeHaven {
         let tier = SafeHaven::compute_tier(completed, volume);
         let discount = SafeHaven::tier_fee_discount(tier);
         penalty_bps.saturating_sub(discount)
+    }
+}
+
+// ================================================================
+//  Prediction Markets — Public Entry Points
+// ================================================================
+
+#[contractimpl]
+impl SafeHaven {
+    // ----------------------------------------------------------------
+    //  Initialization
+    // ----------------------------------------------------------------
+
+    /// Initialize the prediction market subsystem.
+    /// Must be called once before any market operations.
+    pub fn init_prediction_markets(
+        env: Env,
+        admin: Address,
+        fee_recipient: Address,
+        default_fee_bps: Option<u32>,
+    ) -> Result<(), PredictionMarketError> {
+        use crate::prediction_market_types::DEFAULT_FEE_BPS;
+        let fee_bps = default_fee_bps.unwrap_or(DEFAULT_FEE_BPS);
+        prediction_market::initialize_markets(&env, admin, fee_recipient, fee_bps)
+    }
+
+    // ----------------------------------------------------------------
+    //  Market Lifecycle
+    // ----------------------------------------------------------------
+
+    /// Create a new prediction market.
+    /// Returns the new market_id.
+    pub fn create_prediction_market(
+        env: Env,
+        creator: Address,
+        market_type: String,
+        description: String,
+        oracle: Address,
+        close_time: u64,
+        resolution_deadline: u64,
+        outcome_names: Vec<String>,
+        fee_bps: Option<u32>,
+    ) -> Result<u32, PredictionMarketError> {
+        prediction_market::create_market(
+            &env,
+            creator,
+            market_type,
+            description,
+            oracle,
+            close_time,
+            resolution_deadline,
+            outcome_names,
+            fee_bps,
+        )
+    }
+
+    /// Close a market to new bets (admin or oracle only).
+    pub fn close_prediction_market(
+        env: Env,
+        closer: Address,
+        market_id: u32,
+    ) -> Result<(), PredictionMarketError> {
+        prediction_market::close_market(&env, closer, market_id)
+    }
+
+    /// Resolve a closed market. Only the designated oracle may call this.
+    ///
+    /// `resolution_data` is an optional numeric value (e.g., the final aggregate
+    /// deposit amount) that the oracle can store alongside the resolution for
+    /// audit and transparency purposes. Passing `None` is valid when no extra
+    /// data is available.
+    pub fn resolve_prediction_market(
+        env: Env,
+        oracle: Address,
+        market_id: u32,
+        winning_outcome: u32,
+        resolution_data: Option<i128>,
+    ) -> Result<(), PredictionMarketError> {
+        prediction_market::resolve_market(&env, oracle, market_id, winning_outcome, resolution_data)
+    }
+
+    /// Cancel a market and refund all bets (admin only).
+    pub fn cancel_prediction_market(
+        env: Env,
+        admin: Address,
+        market_id: u32,
+        token: Address,
+    ) -> Result<i128, PredictionMarketError> {
+        prediction_market::cancel_market(&env, admin, market_id, token)
+    }
+
+    /// Pause or unpause new market creation (admin only).
+    pub fn set_prediction_market_paused(
+        env: Env,
+        admin: Address,
+        paused: bool,
+    ) -> Result<(), PredictionMarketError> {
+        prediction_market::set_market_paused(&env, admin, paused)
+    }
+
+    // ----------------------------------------------------------------
+    //  Betting
+    // ----------------------------------------------------------------
+
+    /// Place a bet on a market outcome.
+    pub fn place_prediction_bet(
+        env: Env,
+        bettor: Address,
+        market_id: u32,
+        outcome_id: u32,
+        amount: i128,
+        token: Address,
+    ) -> Result<(), PredictionMarketError> {
+        prediction_market::place_bet(&env, bettor, market_id, outcome_id, amount, token)
+    }
+
+    /// Claim winnings for a resolved market.
+    /// Returns the payout amount after fees.
+    pub fn claim_prediction_winnings(
+        env: Env,
+        bettor: Address,
+        market_id: u32,
+        outcome_id: u32,
+        token: Address,
+    ) -> Result<i128, PredictionMarketError> {
+        prediction_market::claim_winnings(&env, bettor, market_id, outcome_id, token)
+    }
+
+    // ----------------------------------------------------------------
+    //  Read-only Queries
+    // ----------------------------------------------------------------
+
+    /// Get full market details, including `resolution_data` once resolved.
+    pub fn get_prediction_market(env: Env, market_id: u32) -> Option<PredictionMarket> {
+        prediction_market::get_market_details(&env, market_id)
+    }
+
+    /// Get outcome details (total bets, bettor count) for a specific outcome.
+    pub fn get_market_outcome(env: Env, market_id: u32, outcome_id: u32) -> Option<MarketOutcome> {
+        prediction_market::get_outcome_details(&env, market_id, outcome_id)
+    }
+
+    /// Get a specific user's bet on an outcome.
+    pub fn get_user_bet(env: Env, market_id: u32, outcome_id: u32, bettor: Address) -> Option<Bet> {
+        prediction_market::get_bet_details(&env, market_id, outcome_id, &bettor)
     }
 }
