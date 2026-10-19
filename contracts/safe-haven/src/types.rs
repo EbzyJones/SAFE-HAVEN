@@ -35,6 +35,11 @@ pub enum VaultKey {
     /// Persists the schema version written by the last `migrate()` call (or 1
     /// for contracts that were initialized before versioning was introduced).
     StorageVersion,
+    /// Accumulated staker-pool balance for `token`.
+    /// On `cancel_deposit` 70 % of the penalty is added here; on
+    /// `claim_staker_pool` the full balance for that token is transferred to
+    /// the caller and this key is cleared.
+    StakerPool(Address),
 }
 
 #[contracttype]

@@ -290,7 +290,13 @@ impl SafeHaven {
             if penalty > 0 {
                 let fee_recipient =
                     storage::get_fee_recipient(&env).ok_or(VaultError::MissingFeeRecipient)?;
-                token_client.transfer(&contract, &fee_recipient, &penalty);
+
+                // 30 % of the penalty → fee_recipient, 70 % → staker pool
+                let fee_slice = (penalty * storage::STAKER_FEE_BPS) / 10_000;
+                let pool_slice = penalty - fee_slice; // remainder avoids rounding drift
+
+                token_client.transfer(&contract, &fee_recipient, &fee_slice);
+                storage::accumulate_staker_pool(&env, &entry.token, pool_slice);
             }
             if refund > 0 {
                 token_client.transfer(&contract, &depositor, &refund);
@@ -321,7 +327,13 @@ impl SafeHaven {
             if penalty > 0 {
                 let fee_recipient =
                     storage::get_fee_recipient(&env).ok_or(VaultError::MissingFeeRecipient)?;
-                token_client.transfer(&contract, &fee_recipient, &penalty);
+
+                // 30 % of the penalty → fee_recipient, 70 % → staker pool
+                let fee_slice = (penalty * storage::STAKER_FEE_BPS) / 10_000;
+                let pool_slice = penalty - fee_slice; // remainder avoids rounding drift
+
+                token_client.transfer(&contract, &fee_recipient, &fee_slice);
+                storage::accumulate_staker_pool(&env, &entry.token, pool_slice);
             }
             if refund > 0 {
                 token_client.transfer(&contract, &depositor, &refund);
@@ -568,6 +580,40 @@ impl SafeHaven {
         storage::remove_pending_admin(&env);
         events::admin_renounced(&env, &admin);
         Ok(())
+    }
+
+    // ----------------------------------------------------------------
+    //  Staker pool — query and claim (Issue #111)
+    // ----------------------------------------------------------------
+
+    /// Returns the current accumulated staker-pool balance for `token`.
+    /// No auth required — public read-only query.
+    pub fn staker_pool_balance(env: Env, token: Address) -> i128 {
+        storage::get_staker_pool_balance(&env, &token)
+    }
+
+    /// Transfer the full staker-pool balance for `token` to `recipient`.
+    ///
+    /// `recipient` must sign the transaction.  Any address may claim —
+    /// the pool is a shared reward bucket, not per-staker.  Callers that
+    /// want to split rewards among multiple stakers should claim here and
+    /// then distribute off-chain or in a separate registry contract.
+    ///
+    /// Returns the amount transferred.  Returns 0 (no-op) if the pool is
+    /// already empty.
+    pub fn claim_staker_pool(
+        env: Env,
+        recipient: Address,
+        token: Address,
+    ) -> Result<i128, VaultError> {
+        recipient.require_auth();
+
+        let amount = storage::drain_staker_pool(&env, &token);
+        if amount > 0 {
+            let token_client = token::Client::new(&env, &token);
+            token_client.transfer(&env.current_contract_address(), &recipient, &amount);
+        }
+        Ok(amount)
     }
 
     // ----------------------------------------------------------------
