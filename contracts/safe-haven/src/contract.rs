@@ -12,6 +12,9 @@ use crate::{
     },
     errors::VaultError,
     events, storage, constants,
+    prediction_market,
+    prediction_market_errors::PredictionMarketError,
+    prediction_market_types::{PredictionMarket, MarketOutcome, Bet},
     types::{
         DepositType, MultiTokenVaultEntry, TokenDeposit, VaultEntry, LedgerVaultEntry, Page,
         STORAGE_VERSION, MAX_TOKENS_PER_DEPOSIT, MEVCommitment, MEVDetection, MEVStatus,
@@ -410,6 +413,42 @@ impl SafeHaven {
         );
 
         Ok(())
+    }
+
+    // ----------------------------------------------------------------
+    //  Prediction Markets - Initialization
+    // ----------------------------------------------------------------
+
+    /// Initialize the prediction market subsystem.
+    ///
+    /// This is a one-time setup that configures the prediction market subsystem
+    /// with an admin, fee recipient, and default fee structure. Once initialized,
+    /// markets can be created, bets placed, and outcomes resolved.
+    ///
+    /// # Parameters
+    /// - `admin`           — Address that can create markets, cancel markets, and pause market creation.
+    /// - `fee_recipient`   — Address that receives fees from claimed winnings.
+    /// - `default_fee_bps` — Default fee percentage in basis points (0-1000). If `None`, uses 100 (1%).
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or `PredictionMarketError::AlreadyInitialized` if already initialized.
+    ///
+    /// # Example
+    /// ```
+    /// contract.init_prediction_markets(
+    ///     admin: admin_address,
+    ///     fee_recipient: treasury_address,
+    ///     default_fee_bps: Some(100),  // 1% fee
+    /// )?;
+    /// ```
+    pub fn init_prediction_markets(
+        env: Env,
+        admin: Address,
+        fee_recipient: Address,
+        default_fee_bps: Option<u32>,
+    ) -> Result<(), PredictionMarketError> {
+        let fee_bps = default_fee_bps.unwrap_or(crate::prediction_market_types::DEFAULT_FEE_BPS);
+        prediction_market::initialize_markets(&env, admin, fee_recipient, fee_bps)
     }
 
     // ----------------------------------------------------------------
