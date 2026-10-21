@@ -583,6 +583,41 @@ impl SafeHaven {
         storage::get_quantum_safe_metadata(&env, &depositor, deposit_id)
     }
 
+    /// Lock `amount` tokens until `unlock_time`.
+    ///
+    /// # Timestamp precision
+    ///
+    /// `unlock_time` is compared against `env.ledger().timestamp()`, the
+    /// **ledger close time** recorded in the Stellar consensus protocol.
+    /// This value advances in whole-second increments but is **not** a
+    /// wall-clock second counter:
+    ///
+    /// * Ledgers close roughly every 5 seconds on Stellar mainnet; the
+    ///   timestamp therefore jumps by ~5 seconds between successive ledgers,
+    ///   not by exactly 1.
+    /// * Any two calls that land in the **same ledger** see the **same**
+    ///   `env.ledger().timestamp()` value, regardless of how far apart they
+    ///   were submitted in real time.
+    ///
+    /// Callers must therefore derive `unlock_time` from
+    /// `env.ledger().timestamp()` (or the equivalent RPC `getLatestLedger`
+    /// close time), **not** from an off-chain `Date.now()`.  Using an
+    /// off-chain clock can cause the computed `unlock_time` to differ from
+    /// the on-chain `now` by up to half a ledger interval (≈ 2-3 seconds).
+    ///
+    /// # Validation order
+    ///
+    /// 1. `unlock_time > now`        — must be strictly in the future
+    ///    (`UnlockTimeNotInFuture` if not)
+    /// 2. `lock_duration <= max_lock` — must not exceed the configured cap
+    ///    (`LockDurationTooLong` if exceeded)
+    /// 3. `lock_duration >= MIN_LOCK_DURATION_SECS` (60 s) — enforces the
+    ///    minimum 60-second lock (`LockDurationTooShort` if below)
+    ///
+    /// Boundary examples (given `now = env.ledger().timestamp()`):
+    /// * `unlock_time = now`        → `UnlockTimeNotInFuture`
+    /// * `unlock_time = now + 59`   → `LockDurationTooShort`
+    /// * `unlock_time = now + 60`   → **success** (exact minimum)
     pub fn deposit(
         env: Env,
         depositor: Address,
