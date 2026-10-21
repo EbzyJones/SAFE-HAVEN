@@ -8,7 +8,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, Bytes, Env, String, Sy
 use crate::{
     constants::{
         MAX_BATCH_SIZE, MAX_DEPOSIT_AMOUNT, MAX_LOCK_DURATION_SECS, MIN_LOCK_DURATION_SECS,
-        MIN_LOCK_LEDGERS, STAKER_PENALTY_BPS, FEE_RECIPIENT_PENALTY_BPS,
+        MIN_LOCK_LEDGERS, MAX_LOCK_LEDGERS, STAKER_PENALTY_BPS, FEE_RECIPIENT_PENALTY_BPS,
     },
     errors::VaultError,
     events, storage, constants,
@@ -1051,6 +1051,9 @@ impl SafeHaven {
         let ledger_gap = unlock_ledger.saturating_sub(current_ledger);
         if ledger_gap < MIN_LOCK_LEDGERS {
             return Err(VaultError::LockDurationTooShort);
+        }
+        if ledger_gap > MAX_LOCK_LEDGERS {
+            return Err(VaultError::LockDurationTooLong);
         }
 
         let deposit_id = storage::next_deposit_id(&env, &depositor);

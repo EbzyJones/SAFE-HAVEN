@@ -2284,6 +2284,127 @@ fn test_deposit_by_ledger_respects_pause() {
     assert_eq!(id2, 1);
 }
 
+// ================================================================
+//  deposit_by_ledger — maximum lock duration enforcement
+// ================================================================
+
+/// deposit_by_ledger with exactly MAX_LOCK_LEDGERS (5 years in ledger units) must succeed.
+#[test]
+fn test_deposit_by_ledger_at_max_duration_succeeds() {
+    use crate::constants::MAX_LOCK_LEDGERS;
+
+    let (env, vault, token, _admin, alice, _fee) = setup();
+
+    let current_ledger = env.ledger().sequence();
+    let unlock_ledger = current_ledger + MAX_LOCK_LEDGERS;
+
+    let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &0);
+
+    // Entry must exist and have the correct unlock_ledger
+    let entry = vault.get_ledger_vault(&alice, &id).expect("ledger vault should exist");
+    assert_eq!(entry.unlock_ledger, unlock_ledger);
+    assert_eq!(entry.amount, 1_000);
+}
+
+/// deposit_by_ledger with MAX_LOCK_LEDGERS + 1 (5 years + 1 ledger ≈ 5 seconds over limit)
+/// must fail with LockDurationTooLong (error code 6).
+#[test]
+fn test_deposit_by_ledger_one_ledger_over_max_fails() {
+    use crate::constants::MAX_LOCK_LEDGERS;
+
+    let (env, vault, token, _admin, alice, _fee) = setup();
+
+    let current_ledger = env.ledger().sequence();
+    let unlock_ledger = current_ledger + MAX_LOCK_LEDGERS + 1;
+
+    assert_eq!(
+        vault.try_deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &0),
+        Err(Ok(VaultError::LockDurationTooLong))
+    );
+}
+
+/// deposit_by_ledger with an arbitrarily large unlock_ledger (u32::MAX) must fail
+/// with LockDurationTooLong, not panic or succeed.
+#[test]
+fn test_deposit_by_ledger_max_u32_unlock_ledger_fails() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+
+    // saturating_sub handles the case where unlock_ledger <= current_ledger
+    // by returning 0, but u32::MAX is always > current_ledger (sequence starts at 0)
+    let unlock_ledger = u32::MAX;
+
+    assert_eq!(
+        vault.try_deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &0),
+        Err(Ok(VaultError::LockDurationTooLong))
+    );
+}
+
+/// Verify that the error for deposit_by_ledger too-long is LockDurationTooLong (code 6),
+/// not some other error — ensuring consistent error codes across all deposit variants.
+#[test]
+fn test_deposit_by_ledger_too_long_returns_error_code_6() {
+    use crate::constants::MAX_LOCK_LEDGERS;
+
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let unlock_ledger = env.ledger().sequence() + MAX_LOCK_LEDGERS + 100;
+
+    let err = vault
+        .try_deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &0)
+        .expect_err("should fail");
+    let inner = err.expect("should be a VaultError");
+    assert_eq!(inner as u32, 6, "LockDurationTooLong must be error code 6");
+}
+
+/// Confirm the max-lock check fires BEFORE any state mutation:
+/// no storage entry should be created when the limit is exceeded.
+#[test]
+fn test_deposit_by_ledger_too_long_creates_no_state() {
+    use crate::constants::MAX_LOCK_LEDGERS;
+
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let unlock_ledger = env.ledger().sequence() + MAX_LOCK_LEDGERS + 1;
+
+    let _ = vault.try_deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &0);
+
+    // No deposit should have been created
+    assert!(vault.get_ledger_vault(&alice, &0).is_none());
+    // Depositor count must remain 0
+    assert_eq!(vault.get_depositor_count(), 0);
+}
+
+/// Symmetry test: both timestamp-based and ledger-based deposits reject durations
+/// longer than 5 years with the same error.
+#[test]
+fn test_all_deposit_variants_reject_over_5_year_lock() {
+    use crate::constants::MAX_LOCK_LEDGERS;
+
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let bob: Address = Address::generate(&env);
+    StellarAssetClient::new(&env, &token).mint(&alice, &3_000);
+
+    let now = env.ledger().timestamp();
+    let bad_unlock_time = now + MAX_LOCK_DURATION_SECS + 1;
+    let bad_unlock_ledger = env.ledger().sequence() + MAX_LOCK_LEDGERS + 1;
+
+    // deposit()
+    assert_eq!(
+        vault.try_deposit(&alice, &token, &1_000, &bad_unlock_time, &0),
+        Err(Ok(VaultError::LockDurationTooLong))
+    );
+
+    // deposit_for()
+    assert_eq!(
+        vault.try_deposit_for(&alice, &bob, &token, &1_000, &bad_unlock_time, &0),
+        Err(Ok(VaultError::LockDurationTooLong))
+    );
+
+    // deposit_by_ledger()
+    assert_eq!(
+        vault.try_deposit_by_ledger(&alice, &token, &1_000, &bad_unlock_ledger, &0),
+        Err(Ok(VaultError::LockDurationTooLong))
+    );
+}
+
 #[test]
 fn test_deposit_by_ledger_event_emitted() {
     let (env, vault, token, _admin, alice, _fee) = setup();
