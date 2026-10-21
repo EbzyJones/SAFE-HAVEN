@@ -1659,6 +1659,17 @@ fn test_transfer_admin_non_admin_cannot_initiate() {
 }
 
 #[test]
+fn test_transfer_admin_to_current_admin_fails() {
+    let (_env, vault, _token, admin, _alice, _fee) = setup();
+    assert_eq!(
+        vault.try_transfer_admin(&admin, &admin),
+        Err(Ok(VaultError::InvalidAdmin))
+    );
+    assert_eq!(vault.get_admin(), Some(admin));
+    assert_eq!(vault.get_pending_admin(), None);
+}
+
+#[test]
 fn test_accept_admin_wrong_address_fails() {
     let (env, vault, _token, admin, _alice, _fee) = setup();
     let new_admin: Address = Address::generate(&env);
