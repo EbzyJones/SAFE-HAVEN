@@ -866,6 +866,256 @@ fn test_deposit_ids_increment_after_withdrawal() {
 }
 
 // ================================================================
+//  Deposit ID counter — acceptance-criteria tests
+// ================================================================
+
+/// AC: First deposit from a fresh address gets ID = 0.
+#[test]
+fn test_deposit_id_counter_first_deposit_is_zero() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    StellarAssetClient::new(&env, &token).mint(&alice, &1_000);
+    let unlock = env.ledger().timestamp() + 3600;
+    let id = vault.deposit(&alice, &token, &1_000, &unlock, &0);
+    assert_eq!(id, 0, "first deposit must receive ID 0");
+}
+
+/// AC: Second deposit from the same address gets ID = 1.
+#[test]
+fn test_deposit_id_counter_second_deposit_is_one() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    StellarAssetClient::new(&env, &token).mint(&alice, &2_000);
+    let t1 = env.ledger().timestamp() + 3600;
+    let t2 = env.ledger().timestamp() + 7200;
+    let id0 = vault.deposit(&alice, &token, &1_000, &t1, &0);
+    let id1 = vault.deposit(&alice, &token, &1_000, &t2, &0);
+    assert_eq!(id0, 0);
+    assert_eq!(id1, 1, "second deposit must receive ID 1");
+}
+
+/// AC: IDs are unique across all deposits for a single user.
+/// Deposits three times and verifies each returned ID is distinct.
+#[test]
+fn test_deposit_id_counter_all_ids_are_unique() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    StellarAssetClient::new(&env, &token).mint(&alice, &3_000);
+    let t1 = env.ledger().timestamp() + 3600;
+    let t2 = env.ledger().timestamp() + 7200;
+    let t3 = env.ledger().timestamp() + 10800;
+    let id0 = vault.deposit(&alice, &token, &1_000, &t1, &0);
+    let id1 = vault.deposit(&alice, &token, &1_000, &t2, &0);
+    let id2 = vault.deposit(&alice, &token, &1_000, &t3, &0);
+    // All three IDs must be pairwise distinct
+    assert_ne!(id0, id1, "IDs 0 and 1 must differ");
+    assert_ne!(id1, id2, "IDs 1 and 2 must differ");
+    assert_ne!(id0, id2, "IDs 0 and 2 must differ");
+}
+
+/// AC: Counter is isolated per depositor — two different users each
+/// start from 0 independently.
+#[test]
+fn test_deposit_id_counter_isolated_per_depositor() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let bob: Address = Address::generate(&env);
+    StellarAssetClient::new(&env, &token).mint(&alice, &3_000);
+    StellarAssetClient::new(&env, &token).mint(&bob, &3_000);
+
+    let t1 = env.ledger().timestamp() + 3600;
+    let t2 = env.ledger().timestamp() + 7200;
+    let t3 = env.ledger().timestamp() + 10800;
+
+    // Alice gets 0, 1
+    let alice_id0 = vault.deposit(&alice, &token, &1_000, &t1, &0);
+    let alice_id1 = vault.deposit(&alice, &token, &1_000, &t2, &0);
+
+    // Bob starts from 0 independently — interleaved with Alice's deposits
+    let bob_id0 = vault.deposit(&bob, &token, &1_000, &t1, &0);
+    let alice_id2 = vault.deposit(&alice, &token, &1_000, &t3, &0);
+    let bob_id1 = vault.deposit(&bob, &token, &1_000, &t2, &0);
+
+    assert_eq!(alice_id0, 0, "alice first deposit must be 0");
+    assert_eq!(alice_id1, 1, "alice second deposit must be 1");
+    assert_eq!(alice_id2, 2, "alice third deposit must be 2");
+    assert_eq!(bob_id0, 0, "bob first deposit must be 0 (isolated counter)");
+    assert_eq!(bob_id1, 1, "bob second deposit must be 1 (isolated counter)");
+
+    // Cross-check: deposit entries are keyed by (depositor, id) — no collision
+    assert_eq!(vault.get_vault(&alice, &0).unwrap().amount, 1_000);
+    assert_eq!(vault.get_vault(&bob, &0).unwrap().amount, 1_000);
+}
+
+/// AC: IDs persist after withdrawal — counter never resets to 0 when all
+/// deposits are drained; the next deposit continues from the previous max.
+#[test]
+fn test_deposit_id_counter_persists_after_full_withdrawal() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    StellarAssetClient::new(&env, &token).mint(&alice, &4_000);
+
+    let t1 = env.ledger().timestamp() + 3600;
+    let id0 = vault.deposit(&alice, &token, &1_000, &t1, &0);
+    assert_eq!(id0, 0);
+
+    // Withdraw the only deposit so Alice has no active deposits
+    advance_time(&env, 3601);
+    vault.withdraw(&alice, &0);
+    assert!(
+        vault.get_vault(&alice, &0).is_none(),
+        "deposit must be gone after withdrawal"
+    );
+    assert_eq!(
+        vault.get_deposit_ids(&alice).len(),
+        0,
+        "active IDs list must be empty after full drain"
+    );
+
+    // Next deposit must NOT restart at 0 — counter is monotonic
+    let t2 = env.ledger().timestamp() + 3600;
+    let id1 = vault.deposit(&alice, &token, &1_000, &t2, &0);
+    assert_eq!(id1, 1, "counter must not reset after full withdrawal; expected 1");
+
+    // Drain again
+    advance_time(&env, 3601);
+    vault.withdraw(&alice, &1);
+    assert_eq!(vault.get_deposit_ids(&alice).len(), 0);
+
+    // Counter continues from 2
+    let t3 = env.ledger().timestamp() + 3600;
+    let id2 = vault.deposit(&alice, &token, &1_000, &t3, &0);
+    assert_eq!(id2, 2, "counter must continue monotonically after second full drain");
+}
+
+/// AC: Subsequent deposits continue from the previous max ID even when
+/// some deposits are still active.
+#[test]
+fn test_deposit_id_counter_continues_from_max_after_partial_withdrawal() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    StellarAssetClient::new(&env, &token).mint(&alice, &4_000);
+
+    let t1 = env.ledger().timestamp() + 3600;
+    let t2 = env.ledger().timestamp() + 7200;
+    let t3 = env.ledger().timestamp() + 10800;
+
+    let id0 = vault.deposit(&alice, &token, &1_000, &t1, &0);
+    let id1 = vault.deposit(&alice, &token, &1_000, &t2, &0);
+    assert_eq!(id0, 0);
+    assert_eq!(id1, 1);
+
+    // Withdraw the first deposit (middle of sequence)
+    advance_time(&env, 3601);
+    vault.withdraw(&alice, &0);
+
+    // New deposit must get id=2, not id=0
+    let id2 = vault.deposit(&alice, &token, &1_000, &t3, &0);
+    assert_eq!(id2, 2, "counter must not reuse IDs from withdrawn deposits");
+
+    // Active list should contain only 1 and 2
+    let ids = vault.get_deposit_ids(&alice);
+    assert_eq!(ids.len(), 2);
+    // Both id=1 and id=2 must be accessible
+    assert!(vault.get_vault(&alice, &1).is_some());
+    assert!(vault.get_vault(&alice, &2).is_some());
+    assert!(vault.get_vault(&alice, &0).is_none());
+}
+
+/// AC: Counter does not wrap around — saturating_add keeps it at u32::MAX
+/// instead of wrapping to 0.  Verified by writing the counter directly to
+/// storage and calling next_deposit_id through the peek_next / direct-storage
+/// path available inside the test env.
+#[test]
+fn test_deposit_id_counter_no_wraparound_at_u32_max() {
+    use crate::storage;
+    let env = Env::default();
+    env.mock_all_auths();
+    let alice: Address = Address::generate(&env);
+
+    // Manually plant the counter at u32::MAX - 1 so we can observe one more
+    // normal increment and then the saturating boundary.
+    env.as_contract(
+        &env.register(crate::contract::SafeHaven, ()),
+        || {
+            let key = VaultKey::DepositCounter(alice.clone());
+            // Plant counter at u32::MAX - 1: next call returns MAX-1, writes MAX
+            env.storage()
+                .persistent()
+                .set(&key, &(u32::MAX - 1u32));
+
+            // First call: reads MAX-1, writes MAX, returns MAX-1
+            let id_before_max = storage::next_deposit_id(&env, &alice);
+            assert_eq!(id_before_max, u32::MAX - 1);
+
+            // Second call: reads MAX, saturating_add(1) stays at MAX, writes MAX, returns MAX
+            let id_at_max = storage::next_deposit_id(&env, &alice);
+            assert_eq!(id_at_max, u32::MAX, "at saturation point must return u32::MAX");
+
+            // Third call: reads MAX again (no increment), returns MAX — no wraparound to 0
+            let id_still_max = storage::next_deposit_id(&env, &alice);
+            assert_eq!(
+                id_still_max,
+                u32::MAX,
+                "counter must not wrap: saturating_add keeps it at u32::MAX"
+            );
+            assert_ne!(id_still_max, 0, "counter must never wrap to 0");
+        },
+    );
+}
+
+/// AC: deposit_for uses the *beneficiary's* counter, so the depositor (bob)
+/// starts from 0 regardless of whether the payer (alice) has prior deposits,
+/// and subsequent direct deposits from bob continue from the same counter.
+#[test]
+fn test_deposit_id_counter_deposit_for_uses_beneficiary_counter() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let bob: Address = Address::generate(&env);
+    StellarAssetClient::new(&env, &token).mint(&alice, &5_000);
+    StellarAssetClient::new(&env, &token).mint(&bob, &2_000);
+
+    let t1 = env.ledger().timestamp() + 3600;
+    let t2 = env.ledger().timestamp() + 7200;
+    let t3 = env.ledger().timestamp() + 10800;
+
+    // Alice makes two direct deposits (her counter: 0, 1)
+    let alice_id0 = vault.deposit(&alice, &token, &1_000, &t1, &0);
+    let alice_id1 = vault.deposit(&alice, &token, &1_000, &t2, &0);
+    assert_eq!(alice_id0, 0);
+    assert_eq!(alice_id1, 1);
+
+    // Alice pays a deposit_for bob — uses BOB's counter (starts at 0)
+    let bob_id0 = vault.deposit_for(&alice, &bob, &token, &1_000, &t1, &0);
+    assert_eq!(bob_id0, 0, "deposit_for must assign ID from beneficiary's counter");
+    assert!(vault.get_vault(&bob, &0).is_some());
+
+    // Bob deposits directly — continues from his own counter (now at 1)
+    let bob_id1 = vault.deposit(&bob, &token, &1_000, &t2, &0);
+    assert_eq!(bob_id1, 1, "direct deposit by bob must continue from shared per-beneficiary counter");
+
+    // Alice's counter must be unaffected
+    let alice_id2 = vault.deposit(&alice, &token, &1_000, &t3, &0);
+    assert_eq!(alice_id2, 2, "alice counter must not be affected by deposit_for operations");
+}
+
+/// AC: deposit_by_ledger shares the same per-depositor counter as deposit.
+#[test]
+fn test_deposit_id_counter_shared_across_deposit_types() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    StellarAssetClient::new(&env, &token).mint(&alice, &3_000);
+
+    let ts = env.ledger().timestamp() + 3600;
+    let ledger = env.ledger().sequence() + MIN_LOCK_LEDGERS;
+    let ts2 = env.ledger().timestamp() + 7200;
+
+    // Timestamp-based deposit → id 0
+    let id0 = vault.deposit(&alice, &token, &1_000, &ts, &0);
+    assert_eq!(id0, 0);
+
+    // Ledger-based deposit → id 1 (same counter)
+    let id1 = vault.deposit_by_ledger(&alice, &token, &1_000, &ledger, &0);
+    assert_eq!(id1, 1, "deposit_by_ledger must draw from the same per-depositor counter");
+
+    // Back to timestamp-based → id 2
+    let id2 = vault.deposit(&alice, &token, &1_000, &ts2, &0);
+    assert_eq!(id2, 2, "subsequent timestamp deposit must continue the shared counter");
+}
+
+// ================================================================
 //  deposit_for
 // ================================================================
 
