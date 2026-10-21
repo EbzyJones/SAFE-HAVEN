@@ -45,4 +45,6 @@ pub enum VaultError {
     InvalidSponsorshipConfig = 26,
     /// Batch size exceeds MAX_BATCH_SIZE
     BatchSizeExceeded = 27,
+    /// Recipient address is invalid (zero address)
+    InvalidRecipient = 28,
 }
