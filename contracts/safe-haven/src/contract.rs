@@ -8,10 +8,13 @@ use soroban_sdk::{contract, contractimpl, token, Address, Bytes, Env, String, Sy
 use crate::{
     constants::{
         MAX_BATCH_SIZE, MAX_DEPOSIT_AMOUNT, MAX_LOCK_DURATION_SECS, MIN_LOCK_DURATION_SECS,
-        MIN_LOCK_LEDGERS, STAKER_PENALTY_BPS, FEE_RECIPIENT_PENALTY_BPS,
+        MIN_LOCK_LEDGERS, MAX_LOCK_LEDGERS, STAKER_PENALTY_BPS, FEE_RECIPIENT_PENALTY_BPS,
     },
     errors::VaultError,
     events, storage, constants,
+    prediction_market,
+    prediction_market_errors::PredictionMarketError,
+    prediction_market_types::{PredictionMarket, MarketOutcome, Bet},
     types::{
         DepositType, MultiTokenVaultEntry, TokenDeposit, VaultEntry, LedgerVaultEntry, Page,
         STORAGE_VERSION, MAX_TOKENS_PER_DEPOSIT, MEVCommitment, MEVDetection, MEVStatus,
@@ -416,6 +419,42 @@ impl SafeHaven {
     }
 
     // ----------------------------------------------------------------
+    //  Prediction Markets - Initialization
+    // ----------------------------------------------------------------
+
+    /// Initialize the prediction market subsystem.
+    ///
+    /// This is a one-time setup that configures the prediction market subsystem
+    /// with an admin, fee recipient, and default fee structure. Once initialized,
+    /// markets can be created, bets placed, and outcomes resolved.
+    ///
+    /// # Parameters
+    /// - `admin`           — Address that can create markets, cancel markets, and pause market creation.
+    /// - `fee_recipient`   — Address that receives fees from claimed winnings.
+    /// - `default_fee_bps` — Default fee percentage in basis points (0-1000). If `None`, uses 100 (1%).
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or `PredictionMarketError::AlreadyInitialized` if already initialized.
+    ///
+    /// # Example
+    /// ```
+    /// contract.init_prediction_markets(
+    ///     admin: admin_address,
+    ///     fee_recipient: treasury_address,
+    ///     default_fee_bps: Some(100),  // 1% fee
+    /// )?;
+    /// ```
+    pub fn init_prediction_markets(
+        env: Env,
+        admin: Address,
+        fee_recipient: Address,
+        default_fee_bps: Option<u32>,
+    ) -> Result<(), PredictionMarketError> {
+        let fee_bps = default_fee_bps.unwrap_or(crate::prediction_market_types::DEFAULT_FEE_BPS);
+        prediction_market::initialize_markets(&env, admin, fee_recipient, fee_bps)
+    }
+
+    // ----------------------------------------------------------------
     //  Smart-wallet and session-key authorization
     // ----------------------------------------------------------------
 
@@ -586,6 +625,41 @@ impl SafeHaven {
         storage::get_quantum_safe_metadata(&env, &depositor, deposit_id)
     }
 
+    /// Lock `amount` tokens until `unlock_time`.
+    ///
+    /// # Timestamp precision
+    ///
+    /// `unlock_time` is compared against `env.ledger().timestamp()`, the
+    /// **ledger close time** recorded in the Stellar consensus protocol.
+    /// This value advances in whole-second increments but is **not** a
+    /// wall-clock second counter:
+    ///
+    /// * Ledgers close roughly every 5 seconds on Stellar mainnet; the
+    ///   timestamp therefore jumps by ~5 seconds between successive ledgers,
+    ///   not by exactly 1.
+    /// * Any two calls that land in the **same ledger** see the **same**
+    ///   `env.ledger().timestamp()` value, regardless of how far apart they
+    ///   were submitted in real time.
+    ///
+    /// Callers must therefore derive `unlock_time` from
+    /// `env.ledger().timestamp()` (or the equivalent RPC `getLatestLedger`
+    /// close time), **not** from an off-chain `Date.now()`.  Using an
+    /// off-chain clock can cause the computed `unlock_time` to differ from
+    /// the on-chain `now` by up to half a ledger interval (≈ 2-3 seconds).
+    ///
+    /// # Validation order
+    ///
+    /// 1. `unlock_time > now`        — must be strictly in the future
+    ///    (`UnlockTimeNotInFuture` if not)
+    /// 2. `lock_duration <= max_lock` — must not exceed the configured cap
+    ///    (`LockDurationTooLong` if exceeded)
+    /// 3. `lock_duration >= MIN_LOCK_DURATION_SECS` (60 s) — enforces the
+    ///    minimum 60-second lock (`LockDurationTooShort` if below)
+    ///
+    /// Boundary examples (given `now = env.ledger().timestamp()`):
+    /// * `unlock_time = now`        → `UnlockTimeNotInFuture`
+    /// * `unlock_time = now + 59`   → `LockDurationTooShort`
+    /// * `unlock_time = now + 60`   → **success** (exact minimum)
     pub fn deposit(
         env: Env,
         depositor: Address,
@@ -1019,6 +1093,9 @@ impl SafeHaven {
         let ledger_gap = unlock_ledger.saturating_sub(current_ledger);
         if ledger_gap < MIN_LOCK_LEDGERS {
             return Err(VaultError::LockDurationTooShort);
+        }
+        if ledger_gap > MAX_LOCK_LEDGERS {
+            return Err(VaultError::LockDurationTooLong);
         }
 
         let deposit_id = storage::next_deposit_id(&env, &depositor);
