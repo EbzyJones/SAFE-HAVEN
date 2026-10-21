@@ -1428,11 +1428,13 @@ fn test_cancel_deposit_partial_penalty_splits_correctly() {
     let (env, vault, token, _admin, alice, fee) = setup();
     let token_client = TokenClient::new(&env, &token);
     let unlock_time = env.ledger().timestamp() + 3600;
-    vault.deposit(&alice, &token, &1_000, &unlock_time, &1_000);
+    vault.deposit(&alice, &token, &1_000, &unlock_time, &1_000); // 10% penalty = 100
     vault.cancel_deposit(&alice, &0);
     assert!(vault.get_vault(&alice, &0).is_none());
+    // penalty = 100; fee_recipient gets 30% = 30; staker pool gets 70% = 70
     assert_eq!(token_client.balance(&alice), 9_900);
-    assert_eq!(token_client.balance(&fee), 100);
+    assert_eq!(token_client.balance(&fee), 30);
+    assert_eq!(vault.staker_pool_balance(&token), 70);
 }
 
 #[test]
@@ -1440,11 +1442,13 @@ fn test_cancel_deposit_100_percent_penalty() {
     let (env, vault, token, _admin, alice, fee) = setup();
     let token_client = TokenClient::new(&env, &token);
     let unlock_time = env.ledger().timestamp() + 3600;
-    vault.deposit(&alice, &token, &1_000, &unlock_time, &10_000);
+    vault.deposit(&alice, &token, &1_000, &unlock_time, &10_000); // 100% penalty = 1000
     vault.cancel_deposit(&alice, &0);
     assert!(vault.get_vault(&alice, &0).is_none());
+    // penalty = 1000; fee_recipient gets 30% = 300; staker pool gets 70% = 700
     assert_eq!(token_client.balance(&alice), 9_000);
-    assert_eq!(token_client.balance(&fee), 1_000);
+    assert_eq!(token_client.balance(&fee), 300);
+    assert_eq!(vault.staker_pool_balance(&token), 700);
 }
 
 #[test]
@@ -2444,8 +2448,10 @@ fn test_cancel_ledger_deposit_with_penalty_splits_correctly() {
 
     vault.cancel_deposit(&alice, &id);
 
+    // penalty = 100; fee_recipient gets 30% = 30; staker pool gets 70% = 70
     assert_eq!(token_client.balance(&alice), 9_900);
-    assert_eq!(token_client.balance(&fee), 100);
+    assert_eq!(token_client.balance(&fee), 30);
+    assert_eq!(vault.staker_pool_balance(&token), 70);
 }
 
 /// #11 — cancel_deposit after the unlock ledger has passed must fail
@@ -3314,8 +3320,10 @@ fn test_cancel_deposit_ledger_based_with_penalty() {
     vault.cancel_deposit(&alice, &id);
 
     // 25% penalty = 1_000; remainder = 3_000
+    // fee_recipient gets 30% of penalty = 300; staker pool gets 70% = 700
     assert_eq!(token_client.balance(&alice), 9_000);
-    assert_eq!(token_client.balance(&fee), 1_000);
+    assert_eq!(token_client.balance(&fee), 300);
+    assert_eq!(vault.staker_pool_balance(&token), 700);
     assert!(vault.get_vault(&alice, &id).is_none());
 }
 
@@ -3672,6 +3680,273 @@ fn test_get_deposit_batch_clamps_at_max_batch_size() {
     assert_eq!(results.len(), MAX_BATCH_SIZE);
 }
 
+// ================================================================
+//  Issue #111 — Deposit by Ledger: Staker Registry Integration
+//
+//  Acceptance criteria:
+//   1. Cancellation works with ledger deposits
+//   2. Penalty distributed correctly (30/70 split)
+//   3. Staker pool receives 70 %
+//   4. Claims are normal
+//   5. Accounting is accurate
+// ================================================================
+
+// ----------------------------------------------------------------
+//  AC-1: cancel_deposit works with ledger deposits
+// ----------------------------------------------------------------
+
+/// Cancelling a ledger-based deposit (zero penalty) returns the full amount.
+#[test]
+fn test_issue111_cancel_ledger_deposit_zero_penalty_works() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let token_client = TokenClient::new(&env, &token);
+
+    let unlock_ledger = env.ledger().sequence() + 100;
+    let id = vault.deposit_by_ledger(&alice, &token, &2_000, &unlock_ledger, &0);
+
+    vault.cancel_deposit(&alice, &id);
+
+    // No penalty: full amount returned, staker pool stays at zero.
+    assert_eq!(token_client.balance(&alice), 10_000);
+    assert_eq!(vault.staker_pool_balance(&token), 0);
+    assert!(vault.get_ledger_vault(&alice, &id).is_none());
+}
+
+/// Cancelling a ledger-based deposit before the unlock ledger must succeed.
+#[test]
+fn test_issue111_cancel_ledger_deposit_before_unlock_succeeds() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+
+    let unlock_ledger = env.ledger().sequence() + 500;
+    let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &500);
+
+    // Still well before unlock — must succeed
+    assert!(vault.try_cancel_deposit(&alice, &id).is_ok());
+    assert!(vault.get_ledger_vault(&alice, &id).is_none());
+}
+
+/// Trying to cancel a ledger-based deposit after the unlock ledger must fail
+/// with VaultAlreadyUnlocked.
+#[test]
+fn test_issue111_cancel_ledger_deposit_after_unlock_fails() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+
+    let unlock_ledger = env.ledger().sequence() + MIN_LOCK_LEDGERS;
+    let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &500);
+
+    advance_ledger(&env, MIN_LOCK_LEDGERS);
+
+    assert_eq!(
+        vault.try_cancel_deposit(&alice, &id),
+        Err(Ok(VaultError::VaultAlreadyUnlocked))
+    );
+}
+
+// ----------------------------------------------------------------
+//  AC-2 & AC-3: Penalty split is 30 % fee_recipient / 70 % staker pool
+// ----------------------------------------------------------------
+
+/// Ledger deposit penalty is split 30 % to fee_recipient and 70 % to
+/// staker pool — identical to the timestamp deposit path.
+#[test]
+fn test_issue111_ledger_cancel_penalty_split_30_70() {
+    let (env, vault, token, _admin, alice, fee) = setup();
+    let token_client = TokenClient::new(&env, &token);
+
+    // 10 % penalty on 1 000 = 100 total penalty
+    // fee_recipient slice = 30 %;  staker pool slice = 70 %
+    let unlock_ledger = env.ledger().sequence() + 100;
+    let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &1_000);
+
+    vault.cancel_deposit(&alice, &id);
+
+    assert_eq!(token_client.balance(&alice), 9_900); // 10_000 - 100 deposit + 900 refund
+    assert_eq!(token_client.balance(&fee), 30);       // 30 % of 100
+    assert_eq!(vault.staker_pool_balance(&token), 70); // 70 % of 100
+}
+
+/// Timestamp deposit penalty is also split 30/70 (same code path, regression guard).
+#[test]
+fn test_issue111_timestamp_cancel_penalty_split_30_70() {
+    let (env, vault, token, _admin, alice, fee) = setup();
+    let token_client = TokenClient::new(&env, &token);
+
+    let unlock_time = env.ledger().timestamp() + 3_600;
+    vault.deposit(&alice, &token, &1_000, &unlock_time, &1_000); // 10% penalty
+
+    vault.cancel_deposit(&alice, &0);
+
+    assert_eq!(token_client.balance(&alice), 9_900);
+    assert_eq!(token_client.balance(&fee), 30);
+    assert_eq!(vault.staker_pool_balance(&token), 70);
+}
+
+/// 100 % penalty on a ledger deposit: all 1 000 units go to pool/fee,
+/// depositor gets 0.
+#[test]
+fn test_issue111_ledger_cancel_100pct_penalty_full_split() {
+    let (env, vault, token, _admin, alice, fee) = setup();
+    let token_client = TokenClient::new(&env, &token);
+
+    let unlock_ledger = env.ledger().sequence() + 100;
+    let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &10_000);
+
+    vault.cancel_deposit(&alice, &id);
+
+    // fee_recipient gets 30 % of 1000 = 300; staker pool gets 70 % = 700
+    assert_eq!(token_client.balance(&alice), 9_000);
+    assert_eq!(token_client.balance(&fee), 300);
+    assert_eq!(vault.staker_pool_balance(&token), 700);
+}
+
+// ----------------------------------------------------------------
+//  AC-4 & AC-5: Claims work normally and accounting is accurate
+// ----------------------------------------------------------------
+
+/// claim_staker_pool transfers the full pool balance to the recipient and
+/// resets the balance to zero.
+#[test]
+fn test_issue111_claim_staker_pool_transfers_and_clears_balance() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let token_client = TokenClient::new(&env, &token);
+    let staker: Address = Address::generate(&env);
+
+    // Create pool balance via ledger cancel
+    let unlock_ledger = env.ledger().sequence() + 100;
+    let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &1_000);
+    vault.cancel_deposit(&alice, &id);
+
+    let pool_before = vault.staker_pool_balance(&token);
+    assert_eq!(pool_before, 70);
+
+    // Claim to staker address
+    let claimed = vault.claim_staker_pool(&staker, &token);
+
+    assert_eq!(claimed, 70);
+    assert_eq!(token_client.balance(&staker), 70);
+    assert_eq!(vault.staker_pool_balance(&token), 0);
+}
+
+/// Claiming when the pool is empty returns 0 and does nothing.
+#[test]
+fn test_issue111_claim_staker_pool_empty_returns_zero() {
+    let (env, vault, token, _admin, _alice, _fee) = setup();
+    let staker: Address = Address::generate(&env);
+    let token_client = TokenClient::new(&env, &token);
+
+    let claimed = vault.claim_staker_pool(&staker, &token);
+    assert_eq!(claimed, 0);
+    assert_eq!(token_client.balance(&staker), 0);
+}
+
+/// Multiple cancellations accumulate in the pool; a single claim drains all.
+#[test]
+fn test_issue111_multiple_cancels_accumulate_then_claim_drains_all() {
+    let (env, vault, token, _admin, alice, fee) = setup();
+    let token_client = TokenClient::new(&env, &token);
+    let staker: Address = Address::generate(&env);
+
+    // Mint extra tokens for alice so she can make multiple deposits
+    StellarAssetClient::new(&env, &token).mint(&alice, &100_000);
+
+    // Three ledger deposits, each 1 000 at 10 % penalty → 100 penalty each
+    for _ in 0..3 {
+        let unlock_ledger = env.ledger().sequence() + 100;
+        let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &1_000);
+        vault.cancel_deposit(&alice, &id);
+    }
+
+    // Pool should hold 3 × 70 = 210; fee_recipient should hold 3 × 30 = 90
+    assert_eq!(vault.staker_pool_balance(&token), 210);
+    assert_eq!(token_client.balance(&fee), 90);
+
+    // Claim all at once
+    let claimed = vault.claim_staker_pool(&staker, &token);
+    assert_eq!(claimed, 210);
+    assert_eq!(token_client.balance(&staker), 210);
+    assert_eq!(vault.staker_pool_balance(&token), 0);
+}
+
+/// Mixing a ledger cancel and a timestamp cancel: both contribute to the
+/// same staker pool and fee_recipient balances; accounting must reconcile.
+#[test]
+fn test_issue111_mixed_ledger_and_timestamp_cancel_accounting() {
+    let (env, vault, token, _admin, alice, fee) = setup();
+    let token_client = TokenClient::new(&env, &token);
+    let staker: Address = Address::generate(&env);
+
+    StellarAssetClient::new(&env, &token).mint(&alice, &10_000);
+
+    // Ledger deposit: 2 000 at 5 % penalty = 100 total penalty
+    let unlock_ledger = env.ledger().sequence() + 100;
+    let id_l = vault.deposit_by_ledger(&alice, &token, &2_000, &unlock_ledger, &500);
+    vault.cancel_deposit(&alice, &id_l);
+    // penalty = 100; fee = 30; pool = 70
+
+    // Timestamp deposit: 1 000 at 10 % penalty = 100 total penalty
+    let unlock_time = env.ledger().timestamp() + 3_600;
+    vault.deposit(&alice, &token, &1_000, &unlock_time, &1_000);
+    vault.cancel_deposit(&alice, &1); // id=1 (second deposit overall)
+    // penalty = 100; fee += 30 → 60; pool += 70 → 140
+
+    assert_eq!(token_client.balance(&fee), 60);
+    assert_eq!(vault.staker_pool_balance(&token), 140);
+
+    // Claim and verify exact totals
+    let claimed = vault.claim_staker_pool(&staker, &token);
+    assert_eq!(claimed, 140);
+    assert_eq!(token_client.balance(&staker), 140);
+    assert_eq!(vault.staker_pool_balance(&token), 0);
+
+    // Overall: alice started with 20_000 (10_000 initial + 10_000 minted)
+    // deposited 2_000 + 1_000 = 3_000; cancelled with refund 1_900 + 900 = 2_800
+    // net alice balance = 20_000 - 3_000 + 2_800 = 19_800
+    assert_eq!(token_client.balance(&alice), 19_800);
+}
+
+/// staker_pool_balance is 0 before any cancellation occurs.
+#[test]
+fn test_issue111_staker_pool_balance_zero_initially() {
+    let (_env, vault, token, _admin, _alice, _fee) = setup();
+    assert_eq!(vault.staker_pool_balance(&token), 0);
+}
+
+/// After claim, a second claim immediately returns 0 (idempotent drain).
+#[test]
+fn test_issue111_double_claim_second_returns_zero() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let staker: Address = Address::generate(&env);
+
+    let unlock_ledger = env.ledger().sequence() + 100;
+    let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &1_000);
+    vault.cancel_deposit(&alice, &id);
+
+    vault.claim_staker_pool(&staker, &token);
+
+    // Second claim on the now-empty pool
+    let second = vault.claim_staker_pool(&staker, &token);
+    assert_eq!(second, 0);
+    assert_eq!(vault.staker_pool_balance(&token), 0);
+}
+
+/// Cancel-then-withdraw pattern: after a cancel the deposit is gone;
+/// a subsequent withdraw must fail with NoDepositFound (no double-spend).
+#[test]
+fn test_issue111_cancel_then_withdraw_fails() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+
+    let unlock_ledger = env.ledger().sequence() + MIN_LOCK_LEDGERS;
+    let id = vault.deposit_by_ledger(&alice, &token, &1_000, &unlock_ledger, &500);
+
+    vault.cancel_deposit(&alice, &id);
+
+    // Advance past the unlock ledger so time isn't the blocker
+    advance_ledger(&env, MIN_LOCK_LEDGERS);
+
+    assert_eq!(
+        vault.try_withdraw(&alice, &id),
+        Err(Ok(VaultError::NoDepositFound))
+    );
 #[test]
 fn test_version_returns_cargo_pkg_version() {
     let (_env, vault, _token, _admin, _alice, _fee) = setup();
