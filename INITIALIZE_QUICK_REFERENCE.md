@@ -1,6 +1,6 @@
 # Initialize() Function — Quick Reference Guide
 
-**Status:** ✅ **VERIFIED & APPROVED**  
+**Status:** ✅ **VERIFIED & APPROVED**
 **Last Updated:** 2024-11-20
 
 ---
@@ -240,28 +240,28 @@ All contract operations implicitly require initialization:
 
 ## Frequently Asked Questions
 
-**Q: Can the contract be re-initialized?**  
+**Q: Can the contract be re-initialized?**
 A: No. The persistent `initialized` flag is set to `true` on first call and never reset.
 
-**Q: What error code is returned on second call?**  
+**Q: What error code is returned on second call?**
 A: Error code 15 (`AlreadyInitialized`).
 
-**Q: Can admin be changed after initialization?**  
+**Q: Can admin be changed after initialization?**
 A: Yes, via the `transfer_admin()` → `accept_admin()` two-step process. But the contract remains initialized.
 
-**Q: What if the first call fails?**  
+**Q: What if the first call fails?**
 A: Contract remains uninitialized. You can retry initialization.
 
-**Q: Can admin be renewed/re-assigned?**  
+**Q: Can admin be renewed/re-assigned?**
 A: Admin can be transferred to a different address, but the initialization flag is never reset.
 
-**Q: Is there a race condition?**  
+**Q: Is there a race condition?**
 A: No. Soroban SDK ensures transaction atomicity. The flag prevents concurrent re-initialization.
 
-**Q: What state is required before I can deposit?**  
+**Q: What state is required before I can deposit?**
 A: Contract must be initialized first. `deposit()` implicitly checks this.
 
-**Q: Can I call initialize with empty addresses?**  
+**Q: Can I call initialize with empty addresses?**
 A: No. `admin.require_auth()` enforces that admin must sign.
 
 ---
@@ -366,6 +366,6 @@ Result: ✅ PRODUCTION READY
 
 ---
 
-**Last Verified:** 2024-11-20  
-**Reviewer:** Kiro AI  
+**Last Verified:** 2024-11-20
+**Reviewer:** Kiro AI
 **Status:** ✅ FINAL

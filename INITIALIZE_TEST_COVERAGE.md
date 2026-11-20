@@ -1,7 +1,7 @@
 # Initialize() Function — Comprehensive Test Coverage
 
-**Purpose:** Document all test cases verifying the `initialize()` function behavior  
-**Scope:** Idempotency guard, state atomicity, error handling  
+**Purpose:** Document all test cases verifying the `initialize()` function behavior
+**Scope:** Idempotency guard, state atomicity, error handling
 **Last Updated:** 2024-11-20
 
 ---
@@ -22,7 +22,7 @@ This document details all test evidence.
 
 ### Test 1: First Call — Admin Setup ✅
 
-**Test Name:** `test_initialize_sets_admin()`  
+**Test Name:** `test_initialize_sets_admin()`
 **File:** `/workspaces/SAFE-HAVEN/contracts/safe-haven/src/test.rs`
 
 ```rust
@@ -46,7 +46,7 @@ fn test_initialize_sets_admin() {
 
 ### Test 2: First Call — Fee Recipient Setup ✅
 
-**Test Name:** `test_initialize_sets_fee_recipient()`  
+**Test Name:** `test_initialize_sets_fee_recipient()`
 **File:** `/workspaces/SAFE-HAVEN/contracts/safe-haven/src/test.rs`
 
 ```rust
@@ -68,7 +68,7 @@ fn test_initialize_sets_fee_recipient() {
 
 ### Test 3: First Call — Rewards Pool Initialization ✅
 
-**Test Name:** `test_initialize_sets_rewards_pool_to_zero()`  
+**Test Name:** `test_initialize_sets_rewards_pool_to_zero()`
 **File:** `/workspaces/SAFE-HAVEN/contracts/safe-haven/src/test.rs`
 
 ```rust
@@ -95,7 +95,7 @@ fn test_initialize_sets_rewards_pool_to_zero() {
 
 ### Test 4: Guard Verification — Second Call Rejected ✅
 
-**Test Name:** `test_double_initialize_fails()`  
+**Test Name:** `test_double_initialize_fails()`
 **File:** `/workspaces/SAFE-HAVEN/contracts/safe-haven/src/test.rs`
 
 ```rust
@@ -129,7 +129,7 @@ This is the primary test for the idempotency guard.
 
 ### Test 5: Initialization State Tracking ✅
 
-**Test Name:** `test_is_initialized()`  
+**Test Name:** `test_is_initialized()`
 **File:** `/workspaces/SAFE-HAVEN/contracts/safe-haven/src/test.rs`
 
 ```rust
@@ -279,7 +279,7 @@ if let Some(v) = max_lock_secs { ... }        // Lines 288-292
 fn test_double_initialize_fails() {
     // After setup(), contract is initialized
     let (_env, vault, _token, admin, _alice, fee) = setup();
-    
+
     // Second call should fail
     let result = vault.try_initialize(&admin, &fee, &None, &None);
     assert_eq!(result, Err(Ok(VaultError::AlreadyInitialized)));
@@ -300,12 +300,12 @@ fn test_double_initialize_fails() {
 ```rust
 pub fn initialize(...) -> Result<(), VaultError> {
     admin.require_auth();
-    
+
     // ← Check FIRST (line 273)
     if storage::is_initialized(&env) {
         return Err(VaultError::AlreadyInitialized);  // Early return
     }
-    
+
     // ← Mutations happen AFTER check
     storage::set_admin(&env, &admin);               // line 277
     // ... rest of mutations
@@ -337,7 +337,7 @@ Example from deposit tests:
 fn test_deposit_success() {
     let (env, vault, token, _admin, alice, _fee) = setup();
     // ↑ Calls initialize() as part of setup
-    
+
     let unlock_time = env.ledger().timestamp() + 3600;
     let id = vault.deposit(&alice, &token, &1_000, &unlock_time, &0);
     // ↑ Works because initialize() was called
@@ -459,6 +459,6 @@ cargo test -p safe-haven --lib -- --nocapture
 
 ---
 
-**Document:** Initialize() Function Test Coverage Analysis  
-**Status:** ✅ VERIFICATION COMPLETE  
+**Document:** Initialize() Function Test Coverage Analysis
+**Status:** ✅ VERIFICATION COMPLETE
 **Date:** 2024-11-20
