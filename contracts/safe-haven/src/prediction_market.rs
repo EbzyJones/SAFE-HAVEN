@@ -115,6 +115,7 @@ pub fn create_market(
         market_id,
         market_type: market_type.clone(),
         description,
+        creator: creator.clone(),
         oracle: oracle.clone(),
         close_time,
         resolution_deadline,
@@ -174,7 +175,7 @@ pub fn place_bet(
     let mut market = storage::get_market(env, market_id)
         .ok_or(PredictionMarketError::MarketNotFound)?;
 
-    // Check market is open
+    // Check market is open (bets are rejected once the market is Closed/Resolved/Cancelled)
     if market.status != MarketStatus::Open {
         return Err(PredictionMarketError::MarketNotOpen);
     }
@@ -247,17 +248,15 @@ pub fn close_market(env: &Env, closer: Address, market_id: u32) -> Result<(), Pr
     let config = storage::get_market_config(env)
         .ok_or(PredictionMarketError::InternalError)?;
 
-    // Only admin or oracle can close
-    if closer != config.admin && closer != storage::get_market_readonly(env, market_id)
-        .ok_or(PredictionMarketError::MarketNotFound)?
-        .oracle
-    {
-        return Err(PredictionMarketError::Unauthorized);
-    }
-
     let mut market = storage::get_market(env, market_id)
         .ok_or(PredictionMarketError::MarketNotFound)?;
 
+    // Only creator, admin or oracle can close
+    if closer != market.creator && closer != config.admin && closer != market.oracle {
+        return Err(PredictionMarketError::Unauthorized);
+    }
+
+    // Idempotent close: a second close (or closing a non-Open market) is rejected
     if market.status != MarketStatus::Open {
         return Err(PredictionMarketError::InvalidMarketStatus);
     }
