@@ -1496,8 +1496,7 @@ impl SafeHaven {
                 }
                 // Add stakers_share to rewards pool
                 if stakers_share > 0 {
-                    let current_pool = storage::get_rewards_pool(&env);
-                    storage::set_rewards_pool(&env, current_pool + stakers_share);
+                    storage::add_rewards_pool(&env, stakers_share);
                 }
             }
             if refund > 0 {
@@ -1544,8 +1543,7 @@ impl SafeHaven {
                 }
                 // Add stakers_share to rewards pool
                 if stakers_share > 0 {
-                    let current_pool = storage::get_rewards_pool(&env);
-                    storage::set_rewards_pool(&env, current_pool + stakers_share);
+                    storage::add_rewards_pool(&env, stakers_share);
                 }
             }
             if refund > 0 {
@@ -1652,25 +1650,55 @@ impl SafeHaven {
             return Err(VaultError::NoRewardsToClaim);
         }
 
+        let pool_generation = storage::get_rewards_pool_generation(&env);
+        let claimed_generation =
+            storage::get_staker_rewards_claimed_generation(&env, &staker);
+        if claimed_generation == pool_generation {
+            return Err(VaultError::NoRewardsToClaim);
+        }
+
         // Calculate staker's proportional share
         // reward = (stake_amount / total_staked) * rewards_pool
-        let reward = (stake_amount * rewards_pool) / total_staked;
+        let reward = stake_amount
+            .checked_mul(rewards_pool)
+            .and_then(|numerator| numerator.checked_div(total_staked))
+            .ok_or(VaultError::AmountTooLarge)?;
 
         if reward <= 0 {
             return Err(VaultError::NoRewardsToClaim);
         }
 
+        if reward > rewards_pool {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let new_pool = rewards_pool
+            .checked_sub(reward)
+            .ok_or(VaultError::InvalidAmount)?;
+
         // Track total claimed
         let already_claimed = storage::get_staker_rewards_claimed(&env, &staker);
-        let new_claimed = already_claimed + reward;
+        let new_claimed = already_claimed
+            .checked_add(reward)
+            .ok_or(VaultError::AmountTooLarge)?;
         storage::set_staker_rewards_claimed(&env, &staker, new_claimed);
+        storage::set_staker_rewards_claimed_generation(&env, &staker, pool_generation);
 
         // Reduce rewards pool
-        let new_pool = rewards_pool - reward;
         storage::set_rewards_pool(&env, new_pool);
 
         events::rewards_claimed(&env, &staker, reward);
         Ok(())
+    }
+
+    /// Get the cumulative rewards already claimed by a staker.
+    pub fn get_staker_rewards_claimed(env: Env, staker: Address) -> i128 {
+        storage::get_staker_rewards_claimed(&env, &staker)
+    }
+
+    /// Get the current unclaimed rewards pool.
+    pub fn get_rewards_pool(env: Env) -> i128 {
+        storage::get_rewards_pool(&env)
     }
 
     // ================================================================

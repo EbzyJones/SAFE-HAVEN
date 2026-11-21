@@ -4004,6 +4004,39 @@ fn test_single_staker_claims_full_rewards() {
 }
 
 #[test]
+fn test_duplicate_staker_claim_fails_and_replenishment_allows_new_claim() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+
+    vault.register_staker(&alice, &1000).unwrap();
+
+    let unlock_time = env.ledger().timestamp() + 3600;
+    let deposit_id = vault
+        .deposit(&alice, &token, &1000, &unlock_time, &1000)
+        .unwrap();
+    vault.cancel_deposit(&alice, &deposit_id).unwrap();
+
+    assert_eq!(vault.get_rewards_pool(), 70);
+    assert!(vault.claim_staker_rewards(&alice).is_ok());
+    assert_eq!(vault.get_rewards_pool(), 0);
+    assert_eq!(vault.get_staker_rewards_claimed(&alice), 70);
+
+    let duplicate = vault.try_claim_staker_rewards(&alice);
+    assert_eq!(duplicate, Err(Ok(VaultError::NoRewardsToClaim)));
+    assert_eq!(vault.get_staker_rewards_claimed(&alice), 70);
+
+    let unlock_time = env.ledger().timestamp() + 3600;
+    let deposit_id = vault
+        .deposit(&alice, &token, &1000, &unlock_time, &1000)
+        .unwrap();
+    vault.cancel_deposit(&alice, &deposit_id).unwrap();
+
+    assert_eq!(vault.get_rewards_pool(), 70);
+    assert!(vault.claim_staker_rewards(&alice).is_ok());
+    assert_eq!(vault.get_rewards_pool(), 0);
+    assert_eq!(vault.get_staker_rewards_claimed(&alice), 140);
+}
+
+#[test]
 fn test_multiple_stakers_proportional_rewards() {
     let env = Env::default();
     env.mock_all_auths();

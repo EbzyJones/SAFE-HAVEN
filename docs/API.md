@@ -152,6 +152,34 @@ soroban contract invoke \
   --deposit_id 0
 ```
 
+## Staker rewards
+
+### register_staker(staker, amount)
+
+Registers a staker or updates their stake amount.
+
+### claim_staker_rewards(staker)
+
+Claims the staker's proportional share of the current rewards pool. The staker must authorize
+the call. A staker can claim only once for each pool replenishment; a duplicate claim fails
+with `NoRewardsToClaim`. A successful claim reduces the pool and increments the staker's
+cumulative claimed-rewards total.
+
+```bash
+soroban contract invoke \
+  --id "$CONTRACT_ID" \
+  --source "$USER_SECRET" \
+  --network "$NETWORK" \
+  --rpc-url "$RPC_URL" \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- claim_staker_rewards \
+  --staker "$USER_ADDRESS"
+```
+
+### get_staker_rewards_claimed(staker) / get_rewards_pool()
+
+Read the staker's cumulative claimed rewards and the current unclaimed pool balance.
+
 ## Admin operations
 
 ### emergency_withdraw(admin, depositor, deposit_id)

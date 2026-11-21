@@ -982,8 +982,41 @@ pub fn get_rewards_pool(env: &Env) -> i128 {
 
 /// Update the rewards pool.
 pub fn set_rewards_pool(env: &Env, amount: i128) {
+    let current_pool = get_rewards_pool(env);
     let key = VaultKey::RewardsPool;
     env.storage().persistent().set(&key, &amount);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_TARGET);
+
+    if amount > current_pool {
+        let generation = get_rewards_pool_generation(env).saturating_add(1);
+        set_rewards_pool_generation(env, generation);
+    }
+}
+
+/// Add newly replenished rewards to the pool and advance its claim generation.
+pub fn add_rewards_pool(env: &Env, amount: i128) {
+    if amount <= 0 {
+        return;
+    }
+
+    let current_pool = get_rewards_pool(env);
+    set_rewards_pool(env, current_pool.saturating_add(amount));
+}
+
+/// Get the current rewards-pool replenishment generation.
+pub fn get_rewards_pool_generation(env: &Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&VaultKey::RewardsPoolGeneration)
+        .unwrap_or(0)
+}
+
+/// Update the rewards-pool replenishment generation.
+pub fn set_rewards_pool_generation(env: &Env, generation: u32) {
+    let key = VaultKey::RewardsPoolGeneration;
+    env.storage().persistent().set(&key, &generation);
     env.storage()
         .persistent()
         .extend_ttl(&key, BUMP_THRESHOLD, BUMP_TARGET);
@@ -999,6 +1032,29 @@ pub fn get_staker_rewards_claimed(env: &Env, staker: &Address) -> i128 {
 pub fn set_staker_rewards_claimed(env: &Env, staker: &Address, amount: i128) {
     let key = VaultKey::StakerRewardsClaimed(staker.clone());
     env.storage().persistent().set(&key, &amount);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_TARGET);
+}
+
+/// Get the pool generation most recently claimed by a staker.
+pub fn get_staker_rewards_claimed_generation(env: &Env, staker: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&VaultKey::StakerRewardsClaimedGeneration(
+            staker.clone(),
+        ))
+        .unwrap_or(u32::MAX)
+}
+
+/// Record the pool generation claimed by a staker.
+pub fn set_staker_rewards_claimed_generation(
+    env: &Env,
+    staker: &Address,
+    generation: u32,
+) {
+    let key = VaultKey::StakerRewardsClaimedGeneration(staker.clone());
+    env.storage().persistent().set(&key, &generation);
     env.storage()
         .persistent()
         .extend_ttl(&key, BUMP_THRESHOLD, BUMP_TARGET);

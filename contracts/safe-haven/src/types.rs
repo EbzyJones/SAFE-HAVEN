@@ -89,6 +89,10 @@ pub enum VaultKey {
     StakerRewardsClaimed(Address),
     /// NFT evolution record: maps (depositor, deposit_id) to NFTEvolutionRecord
     NFTEvolution(Address, u32),
+    /// Incremented whenever rewards are replenished
+    RewardsPoolGeneration,
+    /// Pool generation claimed by each staker
+    StakerRewardsClaimedGeneration(Address),
 }
 
 #[contracttype]
