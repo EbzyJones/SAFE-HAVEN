@@ -1471,6 +1471,23 @@ fn test_rewards_pool_accumulates_penalties_across_cancellations() {
 }
 
 #[test]
+fn test_rewards_pool_persists_across_ledger_advancement() {
+    let (env, vault, token, _admin, alice, _fee) = setup();
+    let unlock_time = env.ledger().timestamp() + 3600;
+
+    let first_id = vault.deposit(&alice, &token, &1_000, &unlock_time, &1_000);
+    vault.cancel_deposit(&alice, &first_id);
+    assert_eq!(vault.get_rewards_pool_total(), 70);
+
+    advance_ledger(&env, 1_000);
+    assert_eq!(vault.get_rewards_pool_total(), 70);
+
+    let second_id = vault.deposit(&alice, &token, &2_000, &unlock_time, &1_000);
+    vault.cancel_deposit(&alice, &second_id);
+    assert_eq!(vault.get_rewards_pool_total(), 210);
+}
+
+#[test]
 fn test_cancel_deposit_100_percent_penalty() {
     let (env, vault, token, _admin, alice, fee) = setup();
     let token_client = TokenClient::new(&env, &token);
