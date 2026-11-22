@@ -29,6 +29,20 @@ pub enum VaultError {
     RecipientNotWhitelisted = 18,
     /// Compound frequency must be >= 60 seconds if non-zero (issue #332).
     InvalidCompoundFrequency = 19,
+    /// MEV attack detected: price deviation > 200 bps from TWAP
+    MevDetected = 20,
+    /// Price sampling too frequent: must wait >= 1 hour between samples
+    SamplingTooFrequent = 21,
+    /// Session key not found
+    SessionKeyNotFound = 20,
+    /// Session key has been revoked
+    SessionKeyRevoked = 21,
+    /// Session key has expired
+    SessionKeyExpired = 22,
+    /// Session key exceeds maximum deposit amount
+    SessionKeyInsufficientLimit = 23,
+    /// Emergency withdrawal would exceed the per-ledger hard cap.
+    EmergencyWithdrawalLimitExceeded = 20,
     /// Sponsorship fund not initialized
     SponsorshipNotInitialized = 20,
     /// User not eligible for sponsorship
@@ -45,4 +59,8 @@ pub enum VaultError {
     InvalidSponsorshipConfig = 26,
     /// Batch size exceeds MAX_BATCH_SIZE
     BatchSizeExceeded = 27,
+    /// Renewable energy percentage must be 0-100
+    InvalidRenewableEnergyPercent = 28,
+    /// Recipient address is invalid (zero address)
+    InvalidRecipient = 28,
 }
