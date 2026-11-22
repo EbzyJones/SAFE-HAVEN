@@ -226,6 +226,7 @@ mod prediction_market_tests {
     /// Creating a 2-outcome market stores both names, sets outcome_count = 2,
     /// and each outcome is indexed by outcome_id 0 and 1.
     #[test]
+    #[test]
     fn test_two_outcome_market_outcome_count() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
         let names = outcome_vec(&env, &["Yes (>1M)", "No (<=1M)"]);
@@ -241,6 +242,7 @@ mod prediction_market_tests {
     }
 
     /// Outcome 0 and 1 are retrievable individually with the correct names.
+    #[test]
     #[test]
     fn test_two_outcome_market_indexing() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
@@ -260,6 +262,8 @@ mod prediction_market_tests {
 
         assert_eq!(outcome1.outcome_id, 1);
         assert_eq!(outcome1.name, String::from_str(&env, "No (<=1M)"));
+    }
+    #[test]
     fn test_init_prediction_markets_first_init_succeeds() {
         // ✅ AC #1: First init succeeds
         let (env, vault, admin, fee_recipient, _alice) = setup();
@@ -299,6 +303,7 @@ mod prediction_market_tests {
         vault.init_prediction_markets(&admin, &fee_recipient, &Some(100))
             .unwrap();
 
+    #[test]
     #[test]
     fn test_place_bet_valid() {
         let (env, contract, bettor, token, market_id, _) = betting_fixture();
@@ -391,6 +396,7 @@ mod prediction_market_tests {
 
     /// `get_market_with_outcomes` returns both the market and outcomes in order.
     #[test]
+    #[test]
     fn test_two_outcome_get_market_with_outcomes() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
         let names = outcome_vec(&env, &["Yes (>1M)", "No (<=1M)"]);
@@ -420,6 +426,7 @@ mod prediction_market_tests {
 
     /// Outcome index 2 does not exist on a 2-outcome market (returns None).
     #[test]
+    #[test]
     fn test_two_outcome_invalid_index_returns_none() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
         let names = outcome_vec(&env, &["Yes", "No"]);
@@ -436,6 +443,7 @@ mod prediction_market_tests {
 
     /// Creating a 3-outcome market stores three names and sets outcome_count = 3.
     #[test]
+    #[test]
     fn test_three_outcome_market_outcome_count() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
         let names = outcome_vec(&env, &["High (>1M)", "Medium (500K-1M)", "Low (<500K)"]);
@@ -450,6 +458,7 @@ mod prediction_market_tests {
     }
 
     /// All three outcomes are individually retrievable and in order.
+    #[test]
     #[test]
     fn test_three_outcome_market_order_preserved() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
@@ -480,6 +489,7 @@ mod prediction_market_tests {
 
     /// `get_market_with_outcomes` returns market + all 3 outcomes in order.
     #[test]
+    #[test]
     fn test_three_outcome_get_market_with_outcomes() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
         let expected = ["High (>1M)", "Medium (500K-1M)", "Low (<500K)"];
@@ -502,6 +512,8 @@ mod prediction_market_tests {
             assert_eq!(o.outcome_id, idx as u32);
             assert_eq!(o.name, String::from_str(&env, expected_name));
         }
+    }
+    #[test]
     fn test_place_bet_invalid_amount_too_large() {
         let (env, contract, bettor, token, market_id, _) = betting_fixture();
         env.as_contract(&contract, || {
@@ -664,6 +676,7 @@ mod prediction_market_tests {
     }
 
     #[test]
+    #[test]
     fn test_place_bet_duplicate_outcome() {
         let (env, bettor, token, _fee_recipient, market_id) = setup_market_with_bettor();
 
@@ -677,6 +690,7 @@ mod prediction_market_tests {
         let other = prediction_market::get_bet_details(&env, market_id, 1, &bettor).unwrap();
         assert_eq!(other.amount, 50);
     }
+    #[test]
     fn test_init_prediction_markets_custom_fee_bps() {
         // Test initialization with custom fee_bps (200 = 2%)
         let (env, vault, admin, fee_recipient, _alice) = setup();
@@ -727,6 +741,7 @@ mod prediction_market_tests {
 
     /// Outcome index 3 does not exist on a 3-outcome market.
     #[test]
+    #[test]
     fn test_three_outcome_invalid_index_returns_none() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
         let names = outcome_vec(&env, &["A", "B", "C"]);
@@ -740,6 +755,7 @@ mod prediction_market_tests {
     // ================================================================
     //  4-Outcome Market Tests
     // ================================================================
+    #[test]
     fn test_init_prediction_markets_zero_fee_bps() {
         // Test initialization with zero fee_bps
         let (env, vault, admin, fee_recipient, _alice) = setup();
@@ -756,6 +772,7 @@ mod prediction_market_tests {
     // ================================================================
 
     #[test]
+    #[test]
     fn test_create_market_valid() {
         // Test successful market creation with valid parameters
         // Expected: market_id = 1, status = Open
@@ -771,6 +788,7 @@ mod prediction_market_tests {
 
     /// Creating a 4-outcome market stores four names and sets outcome_count = 4.
     #[test]
+    #[test]
     fn test_four_outcome_market_outcome_count() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
         let names = outcome_vec(
@@ -785,6 +803,8 @@ mod prediction_market_tests {
             .expect("market not found");
 
         assert_eq!(market.outcome_count, 4);
+    }
+    #[test]
     fn test_create_market_insufficient_close_duration() {
         // Test market creation with close_time too soon (< MIN_MARKET_DURATION_SECS)
         // Expected: InvalidResolutionTime error
@@ -814,6 +834,7 @@ mod prediction_market_tests {
 
     /// All four outcomes are individually retrievable by outcome_id.
     #[test]
+    #[test]
     fn test_four_outcome_market_indexing_by_outcome_id() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
         let expected = ["Tier A (>2M)", "Tier B (1M-2M)", "Tier C (500K-1M)", "Tier D (<500K)"];
@@ -832,6 +853,7 @@ mod prediction_market_tests {
     }
 
     /// `get_market_with_outcomes` returns market + all 4 outcomes in order.
+    #[test]
     #[test]
     fn test_four_outcome_get_market_with_outcomes() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
@@ -1037,6 +1059,7 @@ mod prediction_market_tests {
     /// Market outcome_count equals the length of the outcomes Vec returned
     /// by get_market_with_outcomes for all supported sizes.
     #[test]
+    #[test]
     fn test_outcome_count_matches_vec_length_for_all_sizes() {
         let (env, vault, admin, oracle, _fee) = setup_pm();
 
@@ -1066,6 +1089,8 @@ mod prediction_market_tests {
                 expected_count
             );
         }
+    }
+    #[test]
     fn test_create_market_insufficient_resolution_time() {
         // Test market creation with resolution window < min_resolution_time_secs
         // Expected: InvalidResolutionTime error
