@@ -16,6 +16,7 @@ mod errors;
 mod events;
 mod mev_detection;
 mod mev_integration;
+mod mev_recovery_precision;
 mod storage;
 mod types;
 
